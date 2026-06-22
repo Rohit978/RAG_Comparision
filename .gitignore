@@ -1,0 +1,18 @@
+# Virtual environment
+.venv/
+node_modules/
+
+# Python caches
+__pycache__/
+*.pyc
+
+# Environment secrets
+.env
+.env.local
+.env.*.local
+
+# Local RAG data caches & DBs (avoid pushing large local database files)
+**/data/embedding_cache.json
+**/data/vectors_matrix.npy
+**/data/chunks_list.json
+**/data/chroma_db/

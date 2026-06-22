@@ -1,0 +1,18 @@
+{
+  "gate 1": {"name": "Main Gate 1", "lat": 28.61460, "lon": 77.35820},
+  "main gate": {"name": "Main Gate 1", "lat": 28.61460, "lon": 77.35820},
+  "gate 2": {"name": "Back Gate 2", "lat": 28.61250, "lon": 77.35850},
+  "back gate": {"name": "Back Gate 2", "lat": 28.61250, "lon": 77.35850},
+  "ab3": {"name": "Academic Block 3 (CS/IT)", "lat": 28.61342, "lon": 77.35980},
+  "ab1": {"name": "Academic Block 1 (Admin)", "lat": 28.61380, "lon": 77.35910},
+  "ab2": {"name": "Academic Block 2 (Mech)", "lat": 28.61330, "lon": 77.35900},
+  "ab5": {"name": "Academic Block 5 (First Year)", "lat": 28.61430, "lon": 77.35930},
+  "library": {"name": "Central Library", "lat": 28.61390, "lon": 77.35870},
+  "canteen": {"name": "Main Canteen", "lat": 28.61310, "lon": 77.35950},
+  "nescafe": {"name": "Nescafe Kiosk", "lat": 28.61360, "lon": 77.35940},
+  "boys hostel": {"name": "Boys Hostel Complex", "lat": 28.61200, "lon": 77.36020},
+  "girls hostel": {"name": "Girls Hostel", "lat": 28.61280, "lon": 77.36080},
+  "sports ground": {"name": "Playground", "lat": 28.61450, "lon": 77.36050},
+  "auditorium": {"name": "Auditorium", "lat": 28.61410, "lon": 77.35980},
+  "metro": {"name": "Noida Sector 62 Metro Station", "lat": 28.61726, "lon": 77.37399}
+}

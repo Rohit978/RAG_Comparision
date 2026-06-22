@@ -25,49 +25,56 @@ class RAGEngine:
             metadata={"hnsw:space": "cosine"}
         )
 
-    def _get_embedding(self, text: str, input_type: str = "passage") -> list:
-        """Fetch embedding from OpenRouter using nvidia/llama-nemotron-embed-vl-1b-v2:free"""
-        # Clean text
-        text = text.strip()
-        if not text:
+    def _get_embeddings_batch(self, texts: list[str], input_type: str = "passage") -> list[list]:
+        """Fetch embeddings for a batch of texts in one API call"""
+        texts = [t.strip() for t in texts if t.strip()]
+        if not texts:
             return []
 
         if not self.api_key:
             raise ValueError("OPENROUTER_API_KEY is not set in environment.")
 
-        # Request payload
         payload = {
             "model": self.model,
-            "input": text,
-            "input_type": input_type  # 'passage' or 'query'
+            "input": texts,          # list instead of single string
+            "input_type": input_type
         }
-        
+
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
             "HTTP-Referer": "http://localhost:8000"
         }
-        
+
         req = urllib.request.Request(
             self.embedding_url,
             data=json.dumps(payload).encode("utf-8"),
             headers=headers,
             method="POST"
         )
-        
+
         try:
-            response = urllib.request.urlopen(req, context=ssl_context, timeout=20)
+            response = urllib.request.urlopen(req, context=ssl_context, timeout=60)
             res_data = json.loads(response.read().decode("utf-8"))
             if "data" in res_data and len(res_data["data"]) > 0:
-                vector = res_data["data"][0]["embedding"]
-                return vector
+                # API returns embeddings in order, sorted by index
+                return [item["embedding"] for item in sorted(res_data["data"], key=lambda x: x["index"])]
             else:
                 raise RuntimeError(f"OpenRouter embedding error: {res_data}")
         except Exception as e:
-            print(f"[RAG] Error fetching embedding: {e}")
-            if hasattr(e, "read"):
-                print(f"[RAG] Error details: {e.read().decode('utf-8')}")
+            print(f"[RAG] Batch embedding failed: {e}")
             raise e
+
+    def _get_embedding(self, text: str, input_type: str = "passage") -> list:
+        """Fetch single embedding (delegates to batch embedding)"""
+        # Clean text
+        text = text.strip()
+        if not text:
+            return []
+
+        # Fetch from batch endpoint
+        vectors = self._get_embeddings_batch([text], input_type=input_type)
+        return vectors[0] if vectors else []
 
     def _chunk_text(self, text: str, max_words: int = 150) -> list:
         """Split text into manageable paragraph chunks"""
@@ -109,59 +116,55 @@ class RAGEngine:
             print(f"[RAG] Error parsing PDF {pdf_path.name}: {e}")
         return text
 
-    def ingest_documents(self) -> int:
-        """Re-scan the documents folder and index new document chunks in ChromaDB"""
+    def ingest_documents(self, batch_size: int = 32) -> int:
         if not self.documents_dir.exists():
             self.documents_dir.mkdir(parents=True, exist_ok=True)
             return 0
-        
+
         all_chunks_with_sources = []
         for file_path in self.documents_dir.iterdir():
             if file_path.suffix == ".txt":
                 try:
                     with open(file_path, "r", encoding="utf-8") as f:
-                        content = f.read()
-                        chunks = self._chunk_text(content)
-                        for chunk in chunks:
+                        for chunk in self._chunk_text(f.read()):
                             all_chunks_with_sources.append((chunk, file_path.name))
                 except Exception as e:
-                    print(f"[RAG] Error reading txt file {file_path.name}: {e}")
+                    print(f"[RAG] Error reading {file_path.name}: {e}")
             elif file_path.suffix == ".pdf":
-                pdf_content = self.extract_text_from_pdf(file_path)
-                chunks = self._chunk_text(pdf_content)
-                for chunk in chunks:
+                for chunk in self._chunk_text(self.extract_text_from_pdf(file_path)):
                     all_chunks_with_sources.append((chunk, file_path.name))
 
-        # Get existing IDs from collection to avoid duplicate embeds
+        # Deduplicate against existing ChromaDB entries
         try:
-            existing_results = self.collection.get()
-            existing_ids = set(existing_results["ids"]) if existing_results and "ids" in existing_results else set()
-        except Exception as e:
-            print(f"[RAG] Error fetching existing IDs from ChromaDB: {e}")
+            existing_ids = set(self.collection.get()["ids"])
+        except Exception:
             existing_ids = set()
 
-        print(f"[RAG] Found {len(all_chunks_with_sources)} chunks in total. Ingesting new chunks...")
+        new_chunks = [
+            (chunk, src) for chunk, src in all_chunks_with_sources
+            if hashlib.sha256(chunk.encode()).hexdigest() not in existing_ids
+        ]
+        print(f"[RAG] {len(all_chunks_with_sources)} total chunks, {len(new_chunks)} new to embed.")
+
         new_count = 0
-        for chunk, filename in all_chunks_with_sources:
-            # Generate a stable ID based on chunk hash
-            chunk_id = hashlib.sha256(chunk.encode("utf-8")).hexdigest()
-            if chunk_id not in existing_ids:
-                try:
-                    embedding = self._get_embedding(chunk, input_type="passage")
-                    if embedding:
-                        self.collection.add(
-                            ids=[chunk_id],
-                            embeddings=[embedding],
-                            documents=[chunk],
-                            metadatas=[{"source": filename}]
-                        )
-                        new_count += 1
-                        # Add to local existing_ids set so we don't duplicate within same loop
-                        existing_ids.add(chunk_id)
-                except Exception as e:
-                    print(f"[RAG] Failed to index chunk from {filename}: {e}")
-        
-        print(f"[RAG] Finished ingestion. Added {new_count} new chunks to ChromaDB.")
+        for i in range(0, len(new_chunks), batch_size):
+            batch = new_chunks[i: i + batch_size]
+            texts = [c for c, _ in batch]
+            sources = [s for _, s in batch]
+            ids = [hashlib.sha256(c.encode()).hexdigest() for c in texts]
+            try:
+                vectors = self._get_embeddings_batch(texts, input_type="passage")
+                self.collection.add(
+                    ids=ids,
+                    embeddings=vectors,
+                    documents=texts,
+                    metadatas=[{"source": s} for s in sources]
+                )
+                new_count += len(batch)
+                print(f"[RAG] Embedded {min(i + batch_size, len(new_chunks))}/{len(new_chunks)} chunks...")
+            except Exception as e:
+                print(f"[RAG] Batch {i // batch_size + 1} failed: {e}")
+
         return new_count
 
     def retrieve_context(self, query: str, top_k: int = 3) -> str:
